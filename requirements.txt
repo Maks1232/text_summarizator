@@ -1,5 +1,4 @@
 spacy
-jupyterlab
 tensorflow
 transformers
 tk
