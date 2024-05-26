@@ -1,7 +1,6 @@
 import math
 import nltk
-from nltk import sent_tokenize, word_tokenize, PorterStemmer
-from nltk.corpus import stopwords
+from nltk import PorterStemmer
 import tkinter as tk
 from tkinter import ttk
 import spacy
@@ -10,6 +9,7 @@ from string import punctuation
 from heapq import nlargest
 import re
 from transformers import pipeline
+import string
 
 # Download the 'punkt' and 'stopwords' resources
 nltk.download('punkt')
@@ -19,143 +19,157 @@ nltk.download('stopwords')
 nlp = spacy.load('en_core_web_sm')
 
 
-def _create_frequency_table(text_string) -> dict:
-    stopWords = set(stopwords.words("english"))
-    words = word_tokenize(text_string)
-    ps = PorterStemmer()
-
-    freqTable = dict()
-    for word in words:
-        word = ps.stem(word)
-        if word in stopWords:
-            continue
-        if word in freqTable:
-            freqTable[word] += 1
-        else:
-            freqTable[word] = 1
-
-    return freqTable
+def sentence_tokenizer(text):
+    """
+    Function used to tokenize each sentence of text
+    :param text: text to tokenize
+    :return tokenized  sentences
+    """
+    nlp = spacy.load('en_core_web_sm')
+    doc = nlp(text)
+    sentence_tokens = [sent.text for sent in doc.sents]
+    return sentence_tokens
 
 
-def _create_frequency_matrix(sentences):
-    frequency_matrix = {}
-    stopWords = set(stopwords.words("english"))
+def word_tokenizer(text):
+    """
+       Function used to tokenize each word from text
+       :param text: text to tokenize
+       :return: tokenized  sentences
+    """
+    nlp = spacy.load('en_core_web_sm')
+    doc = nlp(text)
+    word_tokens = [token.text.lower() for token in doc if token is not string.punctuation]
+    word_tokens = [item for item in word_tokens if item != '\n']
+    return word_tokens
+
+
+def calculate_occurrences_for_sent(sentences):
+    """
+    Function used to calculate word occurrences in each sentence
+
+    PorterStemmer -  removing the commoner morphological and inflexional endings from words in English:
+    # running -> run
+    # runs -> run
+    # ran -> ran
+    # easily -> easili
+    # fairly -> fairli #sometimes it creates new words
+
+    :param sentences: sentences in which word occurrences will be calculated
+    :return: dictionary in which keys are sentences and values are dictionaries with word counts in each sentence
+    """
+
+    occurrences_dict = {}
+    stopwords = list(STOP_WORDS)
+
     ps = PorterStemmer()
 
     for sent in sentences:
-        freq_table = {}
-        words = word_tokenize(sent)
+        count_occurrences = {}
+        words = word_tokenizer(sent)
         for word in words:
-            word = word.lower()
-            word = ps.stem(word)
-            if word in stopWords:
-                continue
+            word = ps.stem(word)  # cutting endings of word
+            if word not in stopwords:
+                if word not in count_occurrences:
+                    count_occurrences[word] = 1
+                else:
+                    count_occurrences[word] += 1
+        occurrences_dict[sent[:10]] = count_occurrences
+    return occurrences_dict
 
-            if word in freq_table:
-                freq_table[word] += 1
+
+def calculate_occurrences_for_text(occurrences):
+    """
+    Function used to calculate word occurrences in whole text
+    :param occurrences: dictionary in which keys are sentences and values are dict with word counts in each sentence
+    :return: Dict with words and their number of occurrences in the whole text
+    """
+    word_in_text_dict = {}
+
+    for sent, word_n_count in occurrences.items():
+        for word, count in word_n_count.items():
+            if word not in word_in_text_dict:
+                word_in_text_dict[word] = 1
             else:
-                freq_table[word] = 1
+                word_in_text_dict[word] += 1
 
-        frequency_matrix[sent[:15]] = freq_table
-
-    return frequency_matrix
+    return word_in_text_dict
 
 
-def _create_tf_matrix(freq_matrix):
-    tf_matrix = {}
+def calculate_tfidf(occurrences_in_sent, occurrences_in_text, df):
+    """
+    Function used to calculate IDF(w, D) = log(N / (DF(w, D) + 1))
+    N - number of sentences
+    DF(w, D) - number of word occurrences in text
+    :param occurrences_in_sent: Dict with words and word occurrences in sentence for each sentence
+    :param occurrences_in_text: Dict with words and word occurrences in the whole text
+    :param df: number of sentences
+    :return: Dict of Inverse Document Frequency (IDF)
+    """
+    tf_idf = {}
 
-    for sent, f_table in freq_matrix.items():
-        tf_table = {}
+    for sentence, words_n_number in occurrences_in_sent.items():
+        tf_idf_temp = {}
 
-        count_words_in_sentence = len(f_table)
-        for word, count in f_table.items():
-            tf_table[word] = count / count_words_in_sentence
+        count_words_in_sentence = len(words_n_number)
 
-        tf_matrix[sent] = tf_table
+        for word, number in words_n_number.items():
+            tf_idf_temp[word] = (number / count_words_in_sentence) * \
+                                (math.log10(df / (float(occurrences_in_text[word]) + 1)))
 
-    return tf_matrix
+        tf_idf[sentence] = tf_idf_temp
 
-
-def _create_documents_per_words(freq_matrix):
-    word_per_doc_table = {}
-
-    for sent, f_table in freq_matrix.items():
-        for word, count in f_table.items():
-            if word in word_per_doc_table:
-                word_per_doc_table[word] += 1
-            else:
-                word_per_doc_table[word] = 1
-
-    return word_per_doc_table
+    return tf_idf
 
 
-def _create_idf_matrix(freq_matrix, count_doc_per_words, total_documents):
-    idf_matrix = {}
+def score_sentences_by_tfidf(tfidf):
+    """
+    Function used to calculate sentence score using TF-IDF
+    :param tfidf: Dict of TF-IDF
+    :return: Dict of sentences and their scores
+    """
 
-    for sent, f_table in freq_matrix.items():
-        idf_table = {}
+    sent_scores = {}
 
-        for word in f_table.keys():
-            idf_table[word] = math.log10(total_documents / float(count_doc_per_words[word]))
-
-        idf_matrix[sent] = idf_table
-
-    return idf_matrix
-
-
-def _create_tf_idf_matrix(tf_matrix, idf_matrix):
-    tf_idf_matrix = {}
-
-    for (sent1, f_table1), (sent2, f_table2) in zip(tf_matrix.items(), idf_matrix.items()):
-        tf_idf_table = {}
-        for (word1, value1), (word2, value2) in zip(f_table1.items(),
-                                                    f_table2.items()):  # here, keys are the same in both the table
-            tf_idf_table[word1] = float(value1 * value2)
-        tf_idf_matrix[sent1] = tf_idf_table
-
-    return tf_idf_matrix
-
-
-def _score_sentences(tf_idf_matrix) -> dict:
-    sentenceValue = {}
-    for sent, f_table in tf_idf_matrix.items():
+    for sent, td_idf_dict in tfidf.items():
         total_score_per_sentence = 0
-        count_words_in_sentence = len(f_table)
-        for word, score in f_table.items():
+        count_words_in_sentence = len(td_idf_dict)
+        for word, score in td_idf_dict.items():
             total_score_per_sentence += score
-        sentenceValue[sent] = total_score_per_sentence / count_words_in_sentence
-    return sentenceValue
+        sent_scores[sent] = total_score_per_sentence / count_words_in_sentence
+
+    return sent_scores
 
 
-def _find_average_score(sentenceValue) -> int:
-    sumValues = 0
-    for entry in sentenceValue:
-        sumValues += sentenceValue[entry]
-    average = (sumValues / len(sentenceValue))
-    return average
+def generate_summary_tfidf(sentences, sentence_scores_tfidf, summ_length=1.3):
+    """
+    Function used to chose sentences for a summary
+    :param sentences: Text tokenized sentences
+    :param sentence_scores_tfidf: Sentence scores
+    :param summ_length: Chosen summary length
+    :return: Summarized text
+    """
+    summ = 0
+    for entry in sentence_scores_tfidf:
+        summ += sentence_scores_tfidf[entry]
+    threshold = (summ / len(sentence_scores_tfidf))
 
-
-def _generate_summary(sentences, sentenceValue, threshold):
-    sentence_count = 0
     summary = ''
     for sentence in sentences:
-        if sentence[:15] in sentenceValue and sentenceValue[sentence[:15]] >= (threshold):
+        if sentence[:10] in sentence_scores_tfidf and sentence_scores_tfidf[sentence[:10]] >= (summ_length * threshold):
             summary += " " + sentence
-            sentence_count += 1
+
     return summary
 
 
-def run_tf_idf_summarization(text):
-    sentences = sent_tokenize(text)
-    total_documents = len(sentences)
-    freq_matrix = _create_frequency_matrix(sentences)
-    tf_matrix = _create_tf_matrix(freq_matrix)
-    count_doc_per_words = _create_documents_per_words(freq_matrix)
-    idf_matrix = _create_idf_matrix(freq_matrix, count_doc_per_words, total_documents)
-    tf_idf_matrix = _create_tf_idf_matrix(tf_matrix, idf_matrix)
-    sentence_scores = _score_sentences(tf_idf_matrix)
-    threshold = _find_average_score(sentence_scores)
-    summary = _generate_summary(sentences, sentence_scores, 1.3 * threshold)
+def run_tf_idf_summarization(text, summ_length=1.3):
+    sentences = sentence_tokenizer(text)
+    occurrences_in_sent = calculate_occurrences_for_sent(sentences)
+    occurrences_in_text = calculate_occurrences_for_text(occurrences_in_sent)
+    tfidf = calculate_tfidf(occurrences_in_sent, occurrences_in_text, len(sentences))
+    sentence_scores_tfidf = score_sentences_by_tfidf(tfidf)
+    summary = generate_summary_tfidf(sentences, sentence_scores_tfidf, summ_length)
+
     return summary
 
 
