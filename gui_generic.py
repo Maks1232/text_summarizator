@@ -257,7 +257,6 @@ def update_scale_label(value):
     scale_value.set(f"{int(float(value) * 100)}%")  # Update label to show percentage
     global summary_len
     summary_len = float(value)  # Update the summary length variable
-    print(summary_len)
 
 
 # Main application loop
