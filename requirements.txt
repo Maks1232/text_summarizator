@@ -1,0 +1,7 @@
+spacy
+jupyterlab
+tensorflow
+transformers
+tk
+tf-keras
+nltk
