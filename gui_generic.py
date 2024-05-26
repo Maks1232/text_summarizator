@@ -141,7 +141,7 @@ def score_sentences_by_tfidf(tfidf):
     return sent_scores
 
 
-def generate_summary_tfidf(sentences, sentence_scores_tfidf, summ_length=1.3):
+def generate_summary_tfidf(sentences, sentence_scores_tfidf, summ_length):
     """
     Function used to chose sentences for a summary
     :param sentences: Text tokenized sentences
@@ -173,7 +173,7 @@ def run_tf_idf_summarization(text, summ_length=1.3):
     return summary
 
 
-def run_spacy_summarization(text):
+def run_spacy_summarization(text, max_length=0.3):
     # List of stop words that have to be removed preparation
     stopwords = list(STOP_WORDS)
     # Removing reference numbers
@@ -204,7 +204,7 @@ def run_spacy_summarization(text):
                 else:
                     sentence_scores[sent] += word_frequencies[word.text.lower()]
     # Taking ~30% sentences as a upper limit for text summary
-    select_length = int(len(sentence_tokens) * 0.3)
+    select_length = int(len(sentence_tokens) * max_length)
     summary = nlargest(select_length, sentence_scores, key=sentence_scores.get)
     final_summary = ' '.join([sent.text for sent in summary])
     return final_summary
@@ -215,13 +215,13 @@ def run_hugging_face_transformer(text, max_length=200, min_length=30):
     return summarizer(text, max_length=max_length, min_length=min_length, do_sample=False)[0]["summary_text"]
 
 
-def run_summarization(text, model):
+def run_summarization(text, model, offset):
     if model == "TF-IDF":
-        return run_tf_idf_summarization(text)
+        return run_tf_idf_summarization(text, 1+offset)
     elif model == "spaCy":
-        return run_spacy_summarization(text)
+        return run_spacy_summarization(text, offset)
     elif model == "HuggingFace":
-        max_len = int(0.3 * count_characters_without_spaces(text))
+        max_len = int(offset * count_characters_without_spaces(text))
         return run_hugging_face_transformer(text, max_len)
     else:
         return "Unknown model."
@@ -239,7 +239,9 @@ def summarize_text():
         result_text_area.insert(tk.END, "Proszę wprowadzić tekst do podsumowania.")
         return
 
-    result = run_summarization(input_text, selected_model)
+    power_of_sum = summary_len
+
+    result = run_summarization(input_text, selected_model, power_of_sum)
     result_text_area.delete("1.0", tk.END)
     result_text_area.insert(tk.END, result)
 
@@ -249,6 +251,13 @@ def show_character_count():
     char_count = count_characters_without_spaces(input_text)
     result_text_area.delete("1.0", tk.END)
     result_text_area.insert(tk.END, f"Ilość znaków bez spacji i enterów: {char_count}")
+
+
+def update_scale_label(value):
+    scale_value.set(f"{int(float(value) * 100)}%")  # Update label to show percentage
+    global summary_len
+    summary_len = float(value)  # Update the summary length variable
+    print(summary_len)
 
 
 # Main application loop
@@ -268,20 +277,31 @@ input_text_area.grid(row=0, column=0, padx=10, pady=10, sticky='nsew')
 
 # Model dropdown list
 model_label = tk.Label(root, text="Wybierz model do sumaryzacji:")
-model_label.grid(row=1, column=0, padx=5, pady=5, sticky='w')
+model_label.grid(row=1, column=0, padx=5, pady=5, sticky='sw')
 
 models = ["TF-IDF", "spaCy", "HuggingFace"]
 model_combobox = ttk.Combobox(root, values=models)
-model_combobox.grid(row=2, column=0, padx=5, pady=5, sticky='w')
+model_combobox.grid(row=2, column=0, padx=5, pady=5, sticky='sw')
 model_combobox.current(0)  # Ustawienie domyślnego wyboru
+
+# Scale for selecting a percentage
+summary_len = 0.3
+scale_value = tk.StringVar()  # Variable to store scale value as a string
+scale_label = tk.Label(root, text="Select summary length:")
+scale_label.grid(row=1, column=0, padx=5, pady=5, sticky='s')  # Positioned just above the scale
+scale = tk.Scale(root, from_=0, to=1, resolution=0.1, orient='horizontal', length=200, command=update_scale_label, showvalue=0)
+scale.grid(row=2, column=0, padx=5, pady=5, sticky='n')
+scale.set(0.3)  # Set default value to 30%
+scale_value_label = tk.Label(root, textvariable=scale_value)
+scale_value_label.grid(row=2, column=0, padx=5, pady=30, sticky='n')  # Positioned just above the scale
 
 # Summarization button
 summarize_button = tk.Button(root, text="Summarize", command=summarize_text)
-summarize_button.grid(row=2, column=0, padx=5, pady=5, sticky='e')
+summarize_button.grid(row=2, column=0, padx=5, pady=5, sticky='se')
 
-# Count characters whithout spaces
-char_count_button = tk.Button(root, text="Count Characters", command=show_character_count)
-char_count_button.grid(row=2, column=0, padx=5, pady=5, sticky='n')
+# Count characters without spaces
+char_count_button = tk.Button(root, text="Count Characters", command=show_character_count, width=20)
+char_count_button.grid(row=1, column=0, padx=5, pady=5, sticky='se')
 
 # Summary text box
 result_text_area = tk.Text(root, height=10, width=60)
