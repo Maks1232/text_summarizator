@@ -173,7 +173,7 @@ def run_tf_idf_summarization(text, summ_length=1.3):
     return summary
 
 
-def run_spacy_summarization(text, max_length=0.3):
+def run_basic_summarization(text, max_length=0.3):
     # List of stop words that have to be removed preparation
     stopwords = list(STOP_WORDS)
     # Removing reference numbers
@@ -203,7 +203,7 @@ def run_spacy_summarization(text, max_length=0.3):
                     sentence_scores[sent] = word_frequencies[word.text.lower()]
                 else:
                     sentence_scores[sent] += word_frequencies[word.text.lower()]
-    # Taking ~30% sentences as a upper limit for text summary
+    # Taking x% sentences as a upper limit for text summary
     select_length = int(len(sentence_tokens) * max_length)
     summary = nlargest(select_length, sentence_scores, key=sentence_scores.get)
     final_summary = ' '.join([sent.text for sent in summary])
@@ -218,8 +218,8 @@ def run_hugging_face_transformer(text, max_length=200, min_length=30):
 def run_summarization(text, model, offset):
     if model == "TF-IDF":
         return run_tf_idf_summarization(text, 1+offset)
-    elif model == "spaCy":
-        return run_spacy_summarization(text, offset)
+    elif model == "Basic":
+        return run_basic_summarization(text, offset)
     elif model == "HuggingFace":
         max_len = int(offset * count_characters_without_spaces(text))
         return run_hugging_face_transformer(text, max_len)
@@ -278,7 +278,7 @@ input_text_area.grid(row=0, column=0, padx=10, pady=10, sticky='nsew')
 model_label = tk.Label(root, text="Wybierz model do sumaryzacji:")
 model_label.grid(row=1, column=0, padx=5, pady=5, sticky='sw')
 
-models = ["TF-IDF", "spaCy", "HuggingFace"]
+models = ["TF-IDF", "Basic", "HuggingFace"]
 model_combobox = ttk.Combobox(root, values=models)
 model_combobox.grid(row=2, column=0, padx=5, pady=5, sticky='sw')
 model_combobox.current(0)  # Ustawienie domyślnego wyboru
