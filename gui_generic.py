@@ -3,6 +3,8 @@ import nltk
 from nltk import PorterStemmer
 import tkinter as tk
 from tkinter import ttk
+import requests  # Library for making HTTP requests to fetch website content
+from bs4 import BeautifulSoup  # Library for parsing HTML content
 import spacy
 from spacy.lang.en.stop_words import STOP_WORDS
 from string import punctuation
@@ -10,6 +12,9 @@ from heapq import nlargest
 import re
 from transformers import pipeline
 import string
+import time
+from tkinter import filedialog
+import PyPDF2
 
 # Download the 'punkt' and 'stopwords' resources
 nltk.download('punkt')
@@ -162,13 +167,13 @@ def generate_summary_tfidf(sentences, sentence_scores_tfidf, summ_length):
     return summary
 
 
-def run_tf_idf_summarization(text, summ_length=1.3):
+def run_tf_idf_summarization(text, summ_length=0.3):
     sentences = sentence_tokenizer(text)
     occurrences_in_sent = calculate_occurrences_for_sent(sentences)
     occurrences_in_text = calculate_occurrences_for_text(occurrences_in_sent)
     tfidf = calculate_tfidf(occurrences_in_sent, occurrences_in_text, len(sentences))
     sentence_scores_tfidf = score_sentences_by_tfidf(tfidf)
-    summary = generate_summary_tfidf(sentences, sentence_scores_tfidf, summ_length)
+    summary = generate_summary_tfidf(sentences, sentence_scores_tfidf, summ_length + 1)
 
     return summary
 
@@ -217,7 +222,7 @@ def run_hugging_face_transformer(text, max_length=200, min_length=30):
 
 def run_summarization(text, model, offset):
     if model == "TF-IDF":
-        return run_tf_idf_summarization(text, 1+offset)
+        return run_tf_idf_summarization(text, offset)
     elif model == "Basic":
         return run_basic_summarization(text, offset)
     elif model == "HuggingFace":
@@ -236,13 +241,19 @@ def summarize_text():
     selected_model = model_combobox.get()
     if not input_text:
         result_text_area.delete("1.0", tk.END)
-        result_text_area.insert(tk.END, "Proszę wprowadzić tekst do podsumowania.")
+        result_text_area.insert(tk.END, "Insert text to be summarized!")
         return
 
     power_of_sum = summary_len
 
+    start = time.time()
     result = run_summarization(input_text, selected_model, power_of_sum)
+    stop = time.time()
+
+    result_text_area.tag_configure("bold_blue", font=("Helvetica", 12, "bold"), foreground="blue")
+
     result_text_area.delete("1.0", tk.END)
+    result_text_area.insert(tk.END, f"Execution time: {round(stop - start, 3)}s\n\n", "bold_blue")
     result_text_area.insert(tk.END, result)
 
 
@@ -250,7 +261,7 @@ def show_character_count():
     input_text = input_text_area.get("1.0", tk.END).strip()
     char_count = count_characters_without_spaces(input_text)
     result_text_area.delete("1.0", tk.END)
-    result_text_area.insert(tk.END, f"Ilość znaków bez spacji i enterów: {char_count}")
+    result_text_area.insert(tk.END, f"Characters without spaces and newlines count: {char_count}")
 
 
 def update_scale_label(value):
@@ -259,9 +270,48 @@ def update_scale_label(value):
     summary_len = float(value)  # Update the summary length variable
 
 
+def fetch_url_text():
+    url = url_entry.get()
+    try:
+        response = requests.get(url)
+        response.raise_for_status()  # Raise an exception for non-200 status codes
+        soup = BeautifulSoup(response.content, 'html.parser')
+        # Extract text from relevant sections of the website (modify as needed)
+        article_text = soup.find_all('p')  # Assuming paragraphs hold the article text
+        text = " ".join([p.text.strip() for p in article_text])  # Join paragraph texts
+        input_text_area.delete("1.0", tk.END)
+        input_text_area.insert(tk.END, text)
+    except requests.exceptions.RequestException as e:
+        result_text_area.delete("1.0", tk.END)
+        result_text_area.insert(tk.END, f"Error fetching URL: {e}")
+
+
+def fetch_pdf_text():
+    file_path = filedialog.askopenfilename(filetypes=[("PDF files", "*.pdf")])
+    if file_path:
+        try:
+            with open(file_path, 'rb') as pdf_file:
+                pdf_reader = PyPDF2.PdfReader(pdf_file)
+
+                text = ""
+                for page_num in range(len(pdf_reader.pages)):
+                    page = pdf_reader.pages[page_num]
+                    text += page.extract_text()
+
+                # Remove newlines and hyphens
+                text = text.replace("-", "").replace("\n", " ")
+                #
+
+                input_text_area.delete("1.0", tk.END)
+                input_text_area.insert(tk.END, text)
+        except Exception as e:
+            result_text_area.delete("1.0", tk.END)
+            result_text_area.insert(tk.END, f"PDF Error read out: {e}")
+
+
 # Main application loop
 root = tk.Tk()
-root.title("Aplikacja do Sumaryzacji Tekstu")
+root.title("Summarizer 2000")
 
 # Dynamic sizing configuration
 root.grid_rowconfigure(0, weight=1)
@@ -270,12 +320,18 @@ root.grid_rowconfigure(2, weight=1)
 root.grid_rowconfigure(3, weight=1)
 root.grid_columnconfigure(0, weight=1)
 
+
+root.grid_rowconfigure(4, weight=1)
+
+# Added a row for the URL entry
+root.grid_columnconfigure(0, weight=1)
+
 # Input text box
-input_text_area = tk.Text(root, height=10, width=60)
+input_text_area = tk.Text(root, height=15, width=60)
 input_text_area.grid(row=0, column=0, padx=10, pady=10, sticky='nsew')
 
 # Model dropdown list
-model_label = tk.Label(root, text="Wybierz model do sumaryzacji:")
+model_label = tk.Label(root, text="Select summarization model:")
 model_label.grid(row=1, column=0, padx=5, pady=5, sticky='sw')
 
 models = ["TF-IDF", "Basic", "HuggingFace"]
@@ -295,7 +351,7 @@ scale_value_label = tk.Label(root, textvariable=scale_value)
 scale_value_label.grid(row=2, column=0, padx=5, pady=30, sticky='n')  # Positioned just above the scale
 
 # Summarization button
-summarize_button = tk.Button(root, text="Summarize", command=summarize_text)
+summarize_button = tk.Button(root, text="Summarize", command=summarize_text, width=20)
 summarize_button.grid(row=2, column=0, padx=5, pady=5, sticky='se')
 
 # Count characters without spaces
@@ -303,8 +359,21 @@ char_count_button = tk.Button(root, text="Count Characters", command=show_charac
 char_count_button.grid(row=1, column=0, padx=5, pady=5, sticky='se')
 
 # Summary text box
-result_text_area = tk.Text(root, height=10, width=60)
+result_text_area = tk.Text(root, height=15, width=60)
 result_text_area.grid(row=3, column=0, padx=10, pady=10, sticky='nsew')
+
+url_label = tk.Label(root, text="Enter URL:")
+url_label.grid(row=4, column=0, padx=5, pady=5, sticky='nw')
+
+url_entry = tk.Entry(root, width=165)
+url_entry.grid(row=4, column=0, padx=75, pady=5, sticky='nw')
+
+fetch_button = tk.Button(root, text="Fetch from URL", command=fetch_url_text, width=20)
+fetch_button.grid(row=4, column=0, padx=5, pady=5, sticky='ne')
+
+# Dodanie przycisku do wybierania pliku PDF
+pdf_button = tk.Button(root, text="Fetch from PDF file", command=fetch_pdf_text, width=20, background='lightgray')
+pdf_button.grid(row=5, column=0, padx=5, pady=5, sticky='ne')
 
 # Run app
 root.mainloop()
