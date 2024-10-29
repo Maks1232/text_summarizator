@@ -279,8 +279,9 @@ def fetch_url_text():
         # Extract text from relevant sections of the website (modify as needed)
         article_text = soup.find_all('p')  # Assuming paragraphs hold the article text
         text = " ".join([p.text.strip() for p in article_text])  # Join paragraph texts
+        cleaned_text = re.sub(r'\[\d+\]', '', text)  # Removes patterns like [1], [2] using regex
         input_text_area.delete("1.0", tk.END)
-        input_text_area.insert(tk.END, text)
+        input_text_area.insert(tk.END, cleaned_text)
     except requests.exceptions.RequestException as e:
         result_text_area.delete("1.0", tk.END)
         result_text_area.insert(tk.END, f"Error fetching URL: {e}")
