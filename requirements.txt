@@ -1,0 +1,9 @@
+spacy
+tensorflow==2.15.1
+transformers==2.15.1
+tk
+nltk
+requests
+PyPDF2
+bs4
+opencv-python
