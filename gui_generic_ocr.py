@@ -25,7 +25,9 @@ from tensorflow.keras.backend import ctc_batch_cost
 from PIL import Image, ImageTk
 import tensorflow as tf
 import pickle
-
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.cluster import KMeans
+from collections import defaultdict
 
 
 # Download the 'punkt' and 'stopwords' resources
@@ -35,6 +37,9 @@ nltk.download('stopwords')
 # Load spaCy model
 nlp = spacy.load('en_core_web_sm')
 
+
+def universal_tokenizer(text):
+    return re.findall(r'\b\w+\b', text.lower())
 
 def sentence_tokenizer(text):
     """
@@ -47,73 +52,26 @@ def sentence_tokenizer(text):
     sentence_tokens = [sent.text for sent in doc.sents]
     return sentence_tokens
 
-
-def word_tokenizer(text):
-    """
-       Function used to tokenize each word from text
-       :param text: text to tokenize
-       :return: tokenized  sentences
-    """
-    nlp = spacy.load('en_core_web_sm')
-    doc = nlp(text)
-    word_tokens = [token.text.lower() for token in doc if token is not string.punctuation]
-    word_tokens = [item for item in word_tokens if item != '\n']
-    return word_tokens
-
-
 def calculate_occurrences_for_sent(sentences):
-    """
-    Function used to calculate word occurrences in each sentence
-
-    PorterStemmer -  removing the commoner morphological and inflexional endings from words in English:
-    # running -> run
-    # runs -> run
-    # ran -> ran
-    # easily -> easili
-    # fairly -> fairli #sometimes it creates new words
-
-    :param sentences: sentences in which word occurrences will be calculated
-    :return: dictionary in which keys are sentences and values are dictionaries with word counts in each sentence
-    """
-
+    # Function used to calculate word occurrences in each sentence
     occurrences_dict = {}
-    stopwords = list(STOP_WORDS)
-
-    ps = PorterStemmer()
-
     for sent in sentences:
-        count_occurrences = {}
-        words = word_tokenizer(sent)
+        words = universal_tokenizer(sent)
+        count_occurrences = defaultdict(int)
         for word in words:
-            word = ps.stem(word)  # cutting endings of word
-            if word not in stopwords:
-                if word not in count_occurrences:
-                    count_occurrences[word] = 1
-                else:
-                    count_occurrences[word] += 1
-        occurrences_dict[sent[:10]] = count_occurrences
+            count_occurrences[word] += 1
+        occurrences_dict[sent] = dict(count_occurrences)
     return occurrences_dict
 
-
 def calculate_occurrences_for_text(occurrences):
-    """
-    Function used to calculate word occurrences in whole text
-    :param occurrences: dictionary in which keys are sentences and values are dict with word counts in each sentence
-    :return: Dict with words and their number of occurrences in the whole text
-    """
-    word_in_text_dict = {}
+    # Function used to calculate word occurrences in whole text
+    word_in_text_dict = defaultdict(int)
+    for word_counts in occurrences.values():
+        for word, count in word_counts.items():
+            word_in_text_dict[word] += count
+    return dict(word_in_text_dict)
 
-    for sent, word_n_count in occurrences.items():
-        for word, count in word_n_count.items():
-            if word not in word_in_text_dict:
-                word_in_text_dict[word] = 1
-            else:
-                word_in_text_dict[word] += 1
-
-    return word_in_text_dict
-
-
-def calculate_tfidf(occurrences_in_sent, occurrences_in_text, df):
+def calculate_tfidf(occurrences_in_sent, occurrences_in_text, n_sentences):
     """
     Function used to calculate IDF(w, D) = log(N / (DF(w, D) + 1))
     N - number of sentences
@@ -124,20 +82,16 @@ def calculate_tfidf(occurrences_in_sent, occurrences_in_text, df):
     :return: Dict of Inverse Document Frequency (IDF)
     """
     tf_idf = {}
-
-    for sentence, words_n_number in occurrences_in_sent.items():
+    for sentence, word_counts in occurrences_in_sent.items():
         tf_idf_temp = {}
-
-        count_words_in_sentence = len(words_n_number)
-
-        for word, number in words_n_number.items():
-            tf_idf_temp[word] = (number / count_words_in_sentence) * \
-                                (math.log10(df / (float(occurrences_in_text[word]) + 1)))
-
+        words_in_sentence = sum(word_counts.values())
+        for word, count in word_counts.items():
+            tf = count / words_in_sentence
+            df = occurrences_in_text[word]
+            idf = math.log10(n_sentences / (df + 1))
+            tf_idf_temp[word] = tf * idf
         tf_idf[sentence] = tf_idf_temp
-
     return tf_idf
-
 
 def score_sentences_by_tfidf(tfidf):
     """
@@ -145,48 +99,38 @@ def score_sentences_by_tfidf(tfidf):
     :param tfidf: Dict of TF-IDF
     :return: Dict of sentences and their scores
     """
-
     sent_scores = {}
-
-    for sent, td_idf_dict in tfidf.items():
-        total_score_per_sentence = 0
-        count_words_in_sentence = len(td_idf_dict)
-        for word, score in td_idf_dict.items():
-            total_score_per_sentence += score
-        sent_scores[sent] = total_score_per_sentence / count_words_in_sentence
-
+    for sent, word_scores in tfidf.items():
+        if word_scores:
+            sent_scores[sent] = sum(word_scores.values()) / len(word_scores)
+        else:
+            sent_scores[sent] = 0
     return sent_scores
 
-
-def generate_summary_tfidf(sentences, sentence_scores_tfidf, summ_length):
+def generate_summary_tfidf(sentences, sentence_scores, offset):
     """
-    Function used to chose sentences for a summary
-    :param sentences: Text tokenized sentences
-    :param sentence_scores_tfidf: Sentence scores
-    :param summ_length: Chosen summary length
-    :return: Summarized text
-    """
-    summ = 0
-    for entry in sentence_scores_tfidf:
-        summ += sentence_scores_tfidf[entry]
-    threshold = (summ / len(sentence_scores_tfidf))
+        Function used to chose sentences for a summary
+        :param sentences: Text tokenized sentences
+        :param sentence_scores: Sentence scores
+        :param offset: Chosen summary length
+        :return: Summarized text
+        """
+    # Select top N sentences based on sentence_score, where N = offset * sentences count
+    n_summary = max(1, int(len(sentences) * offset))
+    # Sort descending, keep original sequence
+    ranked = sorted(((sentence, sentence_scores[sentence]) for sentence in sentences), key=lambda x: x[1], reverse=True)
+    selected = set([sent for sent, score in ranked[:n_summary]])
+    # Original sequence in summary kept
+    summary_sentences = [sent for sent in sentences if sent in selected]
+    return ' '.join(summary_sentences)
 
-    summary = ''
-    for sentence in sentences:
-        if sentence[:10] in sentence_scores_tfidf and sentence_scores_tfidf[sentence[:10]] >= (summ_length * threshold):
-            summary += " " + sentence
-
-    return summary
-
-
-def run_tf_idf_summarization(text, summ_length=0.3):
+def run_tf_idf_summarization(text, offset=0.3):
     sentences = sentence_tokenizer(text)
     occurrences_in_sent = calculate_occurrences_for_sent(sentences)
     occurrences_in_text = calculate_occurrences_for_text(occurrences_in_sent)
     tfidf = calculate_tfidf(occurrences_in_sent, occurrences_in_text, len(sentences))
-    sentence_scores_tfidf = score_sentences_by_tfidf(tfidf)
-    summary = generate_summary_tfidf(sentences, sentence_scores_tfidf, summ_length + 1)
-
+    sentence_scores = score_sentences_by_tfidf(tfidf)
+    summary = generate_summary_tfidf(sentences, sentence_scores, offset)
     return summary
 
 
@@ -527,7 +471,7 @@ def paste_prediction_to_input(prediction_text):
 
 def display_predictions_in_gui(image_paths, predictions, vocab):
     result_window = tk.Toplevel(root)
-    result_window.title("Predykcje ręcznego pisma")
+    result_window.title("Handwriting prediction")
 
     canvas = tk.Canvas(result_window)
     scrollbar = ttk.Scrollbar(result_window, orient="vertical", command=canvas.yview)
@@ -610,7 +554,7 @@ def load_vocab():
 
 
 def run_predictions_on_dataset(dataset_path):
-    # Load images using your existing function
+
     images, paths = load_images([os.path.join(dataset_path, f) for f in os.listdir(dataset_path)])
 
     # Wczytaj wytrenowany model
@@ -619,7 +563,6 @@ def run_predictions_on_dataset(dataset_path):
 
     predictions = model.predict(images)
 
-    # Mock predictions - zastąp rzeczywistymi predykcjami
     vocab = load_vocab()
     mock_predictions = [predictions for _ in images]
 
